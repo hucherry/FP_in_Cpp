@@ -1,0 +1,402 @@
+#+TITLE: 函数式编程之旅
+
+* 第 2 章: 函数式编程之旅
+
+- [ ] 理解什么是高阶函数 (higher-order function)
+- [ ] 使用 STL 中的高阶函数
+- [ ] STL 算法中的组合性问题
+- [ ] 递归和尾调 (tail-call) 优化
+- [ ] 折叠算法 (folding algorithm) 的力量
+
+** 2.1 函数使用函数?
+
+*** 2.1.1 概念
+#+BEGIN_QUOTE
+能够接收函数作为参数或返回函数作为结果的函数称为高阶函数 (~higher-order function~), 它们是函数式编程中最重要的概念
+#+END_QUOTE
+
+*** 2.1.2 场景描述
+
+假设有一组人, 需要写出组内所有女性的名字
+[[file:c02_01.png]]
+
+*** 2.1.3 集合过滤
+
+1. 这里使用首个高阶函数为 **集合过滤**, 通俗地讲, 过滤 (~filtering~) 是一个简单的算法, 它主要检查原集合中每个条目
+   是否符合一定的条件, 如果符合, 则将该条件放入结果中.
+2. 过滤可以针对某一特定属性, 也可以针对多个属性, 或更复杂的过滤条件, 因此, 这种结果必须提供一种方法, 可以让用户指定
+   所需的谓词, 在描述的场景中, 需要提供一个接收人的谓词, 并返回这个人是不是女性.
+3. 泛化描述: 对于包含某一类型 T 的任意集合, 把它写作 collection<T> 或只写作 C<T>, 这就意味着这个函数 (高阶函数)
+   的另一个参数是另一个函数, 可以将它的类型写在参数列表中. 这样, 过滤结构接收一个集合和一个谓词函数 (T->bool) 作为
+   参数, 并返回一个过滤后的集合, 因此, 其类型可以写为
+   #+BEGIN_QUOTE
+filter: (collection<T>, (T->bool)) -> collection<T>
+   #+END_QUOTE
+
+*** 2.1.4 映射 (map) / 转换 (transform)
+
+1. 当完成过滤任务后, 还有获取姓名的任务, 于是这里需要一个结构, 其接收一组人并可以返回这组人的姓名
+   [[file:c02_02.png]]
+2. 与过滤类似, 这个结构也不能事先知道从原集合中选取哪些值, 用户可以根据其需求获取特定属性或多个属性或更复杂的操作
+3. 因此, 这个结构也需要允许用户指定一个 **函数**, 从集合中获取一个条目, 对条目进行某些操作, 并返回一个值, 并将这
+   个值放入结果中, 这里的值不一定需要与输入集合包含相同的类型
+4. 泛化描述
+   #+BEGIN_QUOTE
+transform: (collection<In>, (In->Out)) -> collection<Out>
+   #+END_QUOTE
+** 2.2 STL 实例
+*** 2.2.1 求平均值
+1. 命令式实现方式
+   #+BEGIN_SRC cpp
+double average_score(const std::vector<int>& scores){
+  int sum = 0; // 1. 累加初始值
+  // 2. 分数累加
+  for (int score : scores) {
+    sum += score;
+  }
+  // 3. 计算平均值
+  return sum / (double) scores.size();
+}
+   #+END_SRC
+2. 使用 ~std::accumulate~
+   #+BEGIN_SRC cpp
+double average_score(const std::vector<int> &scores){
+  return std::accumulate(scores.cbegin(), scores.cend(), 0) / (double) scores.size();
+}
+   #+END_SRC
+3. 使用 ~std::reduce~, 由于 ~std::accumulate~ 实现的是累加的串行实现, 换成并行版本并没有多大意义, 此时, 可以使用
+   ~std::reduce~ 实现并行计算, 只需要传入 ~std::execution::par~ 函数对象作为参数即可
+   #+BEGIN_SRC cpp
+double average_score(std::vector<int> &scores){
+  std::reduce(std::execution::par, scores.cbegin(), scores.cend(), 0) / (double) scores.size();
+}
+   #+END_SRC
+4. ~std::accumulate~ 在示例中并没有传入其他函数, 实际可以提供一个自定义函数改变其默认行为, 譬如, 如果需要计算所有得分
+   的乘积, 可以传入 ~std::multiplies~ 函数对象作为参数
+   #+BEGIN_SRC cpp
+double scores_product(const std::vector<int> &scores){
+  return std::accumulate(scores.cbegin(), scores.cend(), 1, std::multiplies<int>());
+}
+   #+END_SRC
+*** 2.2.2 折叠 (folding)
+1. ~std::accumulate~ 是折叠 (或精减 (~reduction~)) 的一种实现, 这是一个高阶函数, 它提供了对递归结构, 如向量, 列表和树等
+   的遍历处理, 并允许逐步构建自己需要的结果
+2. 通常折叠不要求实际参数与传给它的二进制函数有相同的类型.
+   #+BEGIN_QUOTE
+折叠接收一个集合, 其中包含 T 类型的条目, R 类型的初始值 (不要求与 T同一类型), 和一个函数 f: (R, T) -> R, 对初始值和集合第一个
+元素调用给定的函数, 结果与集合中的第二个元素再传递给函数 f, 一直重复到集合中所有元素处理完毕. 算法返回一个 R 的值, 这个值也是函
+数 f 最后一次调用的返回值.
+   #+END_QUOTE
+   [[file:c02_06.png]]
+3. 使用 ~std::accumulate~ 实现统计字符串中换行符的数目
+   - 通过问题需求, 可以推断出传递给 ~std::accumulate~ 的函数 f 的类型: =std::string= 是字符的集合, 因此, 类型 T 为
+     =char=; 输出结果是换行符数目, 是一个整数, 因此类型 R 的类型是 =int=, 因此函数 f 的类型是 (int, char) -> int
+   - f 第一次调用时, 其第一个参数应该为 0, 因为此时刚刚统计; 当 f 最后一次被调用时, 返回最终统计结果
+   - f 不知道当前处理的是第几个字符, 所以在 f 的实现中不能使用字符的位置信息, 它只知道当前字符的值 (value) 和上一次返回
+     结果, 这就要求传递给 ~std::accumulate~ 函数第一个参数必须是前一次处理部分的行数
+     [[file:c02_07.png]]
+   - 代码实现
+     #+BEGIN_SRC cpp
+int f(int previous_count, char c) {
+  return (c!='\n' ? previous_count : previous_count+1)
+}
+
+int count_lines(const std::string& s>) {
+  return std::accumulate(
+    s.cbegin(),
+    s.cend(),
+    0,
+    f
+    );
+}
+     #+END_SRC
+*** 2.2.3 删除字符串空白符
+- ~std::find_if~ 算法会查找第一个满足指定谓词的元素
+- 删除字符串中从行首到第一个不是空白字符的所有字符
+  #+BEGIN_SRC cpp
+std::string trim_left(std::string s) {
+  s.erase(
+    s.begin(), std::find_if(s.begin(), s.end(), is_not_space));
+  return s;
+}
+  #+END_SRC
+- 如果传递相反的迭代器, 可以实现从末尾搜索字符串, 从而实现删除尾部空白字符
+  #+BEGIN_SRC cpp
+std::string trim_right(std::string s){
+  s.erase(
+    std::find_if(s.rbegin(), s.rend(), is_not_space).base(), s.end());
+}
+  #+END_SRC
+- 组合两个函数, 得到删除空白字符的所有功能
+  #+BEGIN_SRC cpp
+std::string trim(std::string s){
+  return trim_left(trim_right(std::move(s)));
+}
+  #+END_SRC
+*** 2.2.4 基于谓词分割集合
+1. 场景描述: 假设有一个人的集合, 需要把所有女性都移到集合的前面. 为了实现功能, 根据需要可以使用 ~std::partition~ 和
+   它的变体 ~std::stable_partition~
+2. ~std::partition~ 和 ~std::stable_partition~ 介绍
+   - 两者都接收一个集合和一个谓词, 它们对原集合中的元素进行重排, 把符合条件的与不符合条件的分开
+   - 符合谓词条件的元素移动到集合的前面, 不符合条件的元素移动到集合的后面
+   - 算法返回一个迭代器, 指向第二部分的第一个元素 (不符合谓词条件的第一个元素)
+   - 返回的迭代器与原集合开头的迭代器配合, 获取集合中满足谓词条件的元素 (构成的集合), 与原集合尾端迭代器配合, 可获得原
+     集合中不符合谓词条件的元素 (构成的集合); 即使这些集合中存在空集合也是正确的.
+3. ~std::partition~ 与 ~std::stable_partition~ 区别: ~std:stable_partition~ 可以保持原集合中的顺序
+4. 示例
+   #+BEGIN_SRC cpp
+std::partition(
+  people.begin(),
+  people.end(),
+  is_female
+  )
+   #+END_SRC
+   [[file:c02_10.png]]
+5. 拓展: 假设有一个 UI 元素列表, 用户可以选择一些元素, 把它们移动到特定的位置, 譬如可以如下图所示
+   [[file:c02_11.png]]
+   - 如果想要将选定的元素移动到 UI 元素列表开头, 就与之前的 "女性优先" 问题一致
+   - 如果想要将选定的元素移动到列表中间, 可以将列表按指定的分割点分为两部分, 其中一个子表中的选定元素移动到表底部, 另
+     一子表中的指定元素移动到子表头部.
+     #+BEGIN_SRC cpp
+std::stable_partition( first, destination, is_not_selected );
+std::stable_partition( destination, last, is_selected );
+     #+END_SRC
+*** 2.2.5 过滤 (filtering) 和转换 (transforming)
+1. 这里使用 STL 解决最开始提出的对集体中女性进行优先选择并给出她们的名字的问题
+   [[file:c02_12.png]]
+2. 假设人员的类型为 =person_t=, 使用 =std::vector= 作为集合类型, 为了简单起见, 假设 =is_female=, =is_not_female= 和
+   =name= 都不是成员函数
+   #+BEGIN_SRC cpp
+bool is_female(const person_t& person);
+bool is_not_female(const person_t& person);
+std::string name(const perston_t& person);
+   #+END_SRC
+3. 过滤集合得到只有女性的向量, 此时使用 STL 算法有两种方式, 如果允许修改原来的集合, 可以使用 ~std::remove_if~, 反之, 则
+   使用 ~std::copy_if~
+   #+BEGIN_SRC cpp
+// delete elements no longer needed
+people.erase(
+  std::remove_if(
+    people.begin(),
+    people.end(),
+    is_not_female,
+    people.end());
+  );
+
+// keep elements
+std::vector<person_t> females; // create a new vector to store female elements
+std::copy_if(
+  people.cbegin(),
+  people.cend(),
+  std::back_inserter(females),
+  is_female);
+   #+END_SRC
+4. 通过使用 ~std::transform~ 可以获取已过滤集合中的人员姓名
+   #+BEGIN_SRC cpp
+std::vector<std::string> names(females.size());
+
+std::transform(
+  females.cbegin(),
+  females.cend(),
+  names.begin(),
+  name);
+   #+END_SRC
+** 2.3 STL 算法的可组合性
+1. 手写循环方式比之前介绍的 STL 解决方案可能更加高效, 因为避免了不必要的 =people= 集合的副本生成
+   #+BEGIN_SRC cpp
+std::vector<std::string> names;
+
+for(const auto& person : people){
+  if (is_female(person)){
+    names.push_back(name(person));
+  }
+}
+   #+END_SRC
+2. 基于 STL 的实现会生成不必要的 =people= 集合的副本, 且会创建实际不需要的附加向量, 为了解决类似问题, 可以使用指针或
+   引用, 或者一个智能的迭代器, 但这增加了复杂性
+3. 考虑 ~std::transform~ 和 ~std::filter~ 的方法签名, 它们被设计为 ~可组合的~.
+   #+BEGIN_SRC cpp
+std::filter: (collection<T>, (T->bool)) -> collection<T>;
+std::transform: (collection<T>, (T->T2)) -> collection<T2>;
+std::transform(std::filter(people, is_female), name)
+   #+END_SRC
+   - 使用一对迭代器传递集合, 可允许遍历集合的一部分, 而非全部
+   - 把输出迭代器作为参数传递, 而非作为方法的返回值, 这可使得输入和输出成为不同类型的集合 (譬如, 想收集所有不同女性名字,
+     可以将迭代器传递给 ~std::set~)
+   - 将函数结果作为目标范围的迭代器, 并指向最后一次存储元素的下个位置, 也有优势, 譬如, 如果要建立一个包含所有人员的数组,
+     女性放在前面, 后跟其他人员 (类似 ~std::stable_partition~, 但是创建一个新集合), 就可以简单两次调用 ~std::copy_if~
+     就可以达成目标, 第一次复制所有女性, 第二次获取其他人, **第一次调用返回的迭代器正好指向第二次开始复制非女性成员的位置**.
+     #+BEGIN_SRC cpp
+std::vector<person_t> separated(people.size());
+
+// 最后一个人员复制后, 返回位置
+const auto last = std::copy_if(
+  people.cbegin(),
+  people.cend(),
+  separated.begin(),
+  if_female
+  );
+
+std::copy_if(
+  people.cbegin(),
+  people.cend(),
+  last, // 存放所有女性之外的成员
+  is_not_female);
+     #+END_SRC
+** 2.4 编写自己的高阶函数
+*** 2.4.1 接收函数作为参数
+1. 在之前获取女性名字的例子中, 如果不想限定为女性, 想用其他谓词条件, 创建一个可以多次使用的函数是很有用的
+2. 如果这个函数可以处理任意类型的集合和任意结果类型的集合, 而不限于人的向量, 它将更有用
+3. 可以把人向量作为常饮用传递, 把函数类型用作模板参数, 可以不损失程序的性能, 让编译器在编译阶段确定具体的类型, 类似下
+   面的代码, 允许用户传递任意类似函数的东西, 可以像普通函数一样调用它
+   #+BEGIN_SRC cpp
+template<typename FilterFunction>
+std::vector<std::string> names_for(
+  const std::vector<person_t> &people,
+  FilterFunction filter
+  );
+   #+END_SRC
+*** 2.4.2 用循环实现
+1. 对于上面的 ~names_for~ 函数, 可以使用 STL 算法实现, 但并不一定, 如果没有充足的理由, 建议尽可能使用 STL 算法
+2. 使用手动编写的循环实现 ~names_for~ 函数性能会更好, STL 的组合导致的性能问题可以使用 ~ranges~ 来尝试改进
+   #+BEGIN_SRC cpp
+// 使用硬编码循环实现函数
+template <typename FilterFunction>
+std::vector<std::string> names_for(
+  const std::vector<person_t> &people,
+  FilterFunction filter
+  ){
+  std::vector<std::string> result;
+
+  for(const person_t &person : people) {
+    if (filter (person)){
+      result.push_back(name(person));
+    }
+  }
+
+  return results;
+}
+   #+END_SRC
+*** 2.4.3 递归 (recursive) 和尾调用优化 (tail-call optimization)
+1. 之前的硬编码循环从外部看是 "纯" 的, 但具体的实现并非如此, 当发现一个新的符合条件的人员时, 它就要修改结果向量
+2. 在纯 FP 语言中是不存在循环的, 遍历集合的函数通常是由递归实现的
+3. 对于一个非空向量, 可以递归地处理它的头 (第一个元素) 和尾 (所有其他元素), 这又可以被看作一个向量. 如果头向量
+   满足谓词, 则把它包含在结果中, 如果接收到一个空向量, 则不需要处理, 即返回一个空向量
+4. 假设有一个 ~tail~ 函数, 它接收一个向量并返回它的 "尾", 还有一个 ~prepend~ 函数, 它接收一个元素和一个向量,
+   返回原来向量的副本, 把这个元素添加到结果向量的前面, 则实现如下
+   #+BEGIN_SRC cpp
+// 相关递归实现
+template<typename FilterFunction>
+std::vector<std::string> names_for(
+  const std::vector<person_t> &people,
+  FilterFunction filter
+  ){
+  if(people.empty()){
+    return {}; // 如果集合为空, 返回结果为空
+  } else {
+    const auto head = people.front();
+    const auto processed_tail = names_for( // 递归调用函数处理集合的尾
+      tail(people),
+      filter
+      );
+    // 如果第一个元素符合条件, 将它包含在结果中, 否则跳过它
+    if (filter(head)) {
+      return prepend(name(head), processed_tail);
+    } else {
+      return processed_tail;
+    }
+  }
+}
+   #+END_SRC
+5. 上述实现是低效的
+   - 由于某种原因导致 ~tail~ 函数不存在: 实现 ~tail~ 需要创建一个新向量并将所有旧向量中元素复制到其中 (第一个元
+     素除外); 不过此时可以通过一对迭代器代替向量作为输入来解决, 此时只需要移动迭代器使其指向第一个元素即可获取向量尾
+     #+BEGIN_SRC cpp
+template <typename FilterFunction, typename Iterator>
+std::vector<std::string> names_for(
+  Iterator people_begin,
+  Iterator people_end,
+  FilterFunction filter
+  ){
+  ...
+  const auto processed_tail = names_for(
+    people_begin + 1;
+    people_end,
+    filter
+    );
+  ...
+}
+     #+END_SRC
+   - 将元素插入到向量前面的情况不多, 如果是硬编码的循环中使用添加, 在向量连接时, 比前置 (插入) 更高效
+   - 如果集合大量调用这个函数, 由于每次递归都会占用堆栈中的内存, 如果堆栈溢出会导致程序崩溃, 即便集合不大, 堆栈不溢出,
+     但是函数调用一样会付出代价, 简单的循环会更高效
+   - 为了解决递归的问题, 必须依赖编译器将递归转换为循环, 为了让编译器实现转换, 必须实现称为 "尾递归" (tail recursion)
+     形式, 在尾递归中, 递归调用是函数的最后一件事: **递归后不能做任何事情**
+   - 之前实现的都不是 "尾递归", 因为用户会从递归调用中获取结果, 将函数改造为尾递归必须寻找一种策略, 可以收集中间结果,
+     这样就必须使用一个附加参数
+     #+BEGIN_SRC cpp
+// 尾递归实现
+template <typename FilterFunction, typename Iterator>
+std::vector<std::string> names_for_helper(
+  Iterator people_begin,
+  Iterator people_end,
+  FilterFunction filter,
+  std::vector<std::string> previously_collected
+  ){
+  if(people_begin == people_end){
+    return previously_collected;
+  } else {
+    const auto head = *people_begin;
+    if (filter(head)) {
+      previously_collected.push_back(name(head));
+    }
+    return names_for_helper(
+      people_begin + 1,
+      people_end,
+      filter,
+      std::move(previously_collected)
+      );
+  }
+}
+     #+END_SRC
+   - 现在可以返回已经计算的或内层递归调用返回的值, 但有个小问题, 必须使用附加参数调用函数, 因此, 将其命名为 ~names_for_helper~,
+     对主函数进行修改, 调用该辅助函数, 并传递一个空向量作为 =previously_collected= 参数, 此时, 支持尾递归优化 (TCO) 编译器
+     就可以将这个递归函数转换为一个简单的循环, 此时的实现就和硬编码循环一样高效
+     #+BEGIN_SRC cpp
+template <typename FilterFunction, typename Iterator>
+std::vector<std::string> names_for(
+  Iterator people_begin,
+  Iterator people_end,
+  FilterFunction filter)
+{
+  return names_for_helper(
+    people_begin,
+    people_end,
+    filter,
+    {});
+}
+     #+END_SRC
+*** 2.4.4 使用折叠实现
+1. 使用递归是一种低水平的结构, 即使在纯 FP 语言中也有避免手工实现, 之所以如此, 是因为递归太过复杂了
+2. 折叠一次取得一个元素, 并对以前累加的值和当前元素施加指定的函数, 这和之前的 ~names_for_helper~ 实现是一致的.
+   实质上, 折叠是编写尾递归函数遍历集合的一种更好的方式, 共同的部分被抽取出来, 用户只需要指定集合, 初始值和必须
+   的累加处理过程
+   #+BEGIN_SRC cpp
+std::vector<std::string> append_name_if(
+  std::vector<std::string> previously_collected,
+  const person_t &person
+  ){
+  if (filter (person)) {
+    previously_collected.push_back(name(person));
+  }
+  return previously_collected;
+}
+...
+
+return std::accumulate(
+  people.cbegin(),
+  people.cend(),
+  std::vector<std::string> {},
+  append_name_if
+  );
+   #+END_SRC

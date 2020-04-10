@@ -1,0 +1,473 @@
+#+TITLE: 函数对象
+
+* 第三章 函数对象
+
+#+BEGIN_QUOTE
+使用鸭式类型 (duck-typing), 即如果可以写出一个实体, 后跟圆括号界定的实际参数, 形如
+f(arg1, arg2, ..., argn), 那么这个实体就是一个函数对象.
+#+END_QUOTE
+
+** 3.1 函数和函数对象
+*** 3.1.1 自动推断返回值类型
+1. 从 C++14 开始, 完全可以忽略返回值类型, 而由编译器根据 return 语句中的表达式进行推断
+2. 如果一个函数有多个返回语句, 则所有语句都返回相同类型, 如果返回类型不同, 编译器将报错
+   #+BEGIN_SRC cpp
+auto ask(bool flag){
+  if (flag) return 42;
+  else return std::string("42"); // 错误, 两个 return 返回类型不同
+}
+   #+END_SRC
+3. 推断出返回值类型之后就可以用到函数的其余部分中, 这将允许用户编写自动推测返回值类型的递归函数
+   #+BEGIN_SRC cpp
+auto factorial(int n){
+  if (n==0){
+    return (1); // 推断返回类型为 int
+  } else {
+    return factorial(n - 1) * n; // 已经知道 factorial 返回 int 类型的值, 两个 int 相乘也是 int 类型
+  }
+}
+   #+END_SRC
+4. 在编写递归函数时, 要么指定返回值类型, 要不先编写非递归的返回语句. 上述 ~factorial~ 函数,
+   如果交换 if 和 else 分支的顺序就会报错, 因为此时编译器首先编译 ~factorial~ 函数的递归调用,
+   之后才是函数的类型推断.
+5. =auto= 表明使用模板参数类型推断规则来生成类型, 还可以使用 ~decltype(auto)~ 作为返回值类型的声明
+   来替代, 此时, 函数的返回值将是返回表达式的 =decltype= 类型.
+   #+BEGIN_SRC cpp
+decltype(auto) ask() {return answer;} // 返回 int: decltype(answer)
+decltype(auto) ask() {return (answer);} // 返回 int 类型的引用: decltype((answer)), 而 auto 只能被推断为 int
+decltype(auto) ask() {return 42 + answer;} // 返回 int: decltype(42 + answer)
+   #+END_SRC
+6. 如果使用 ~decltype~ 产生的结果不加修改的传递给其他函数的通用函数是有用的, 但是由于不知道传递给用户
+   参数什么函数, 也 **不能知道向调用者传递结果的结果值还是引用**, 可能会产生未定义的行为.
+   注意: 上述示例代码中可以看到, ~decltype(auto)~ 可能是 =int=, 也可能是 =int&=, 这样会造成歧义.
+7. 完美传递实际参数
+   - 如果想要完美传递结果, 可以用 ~delctype(auto)~ 指定返回值类型
+     #+BEGIN_SRC cpp
+template <typename Object, typename Function>
+decltype(auto) call_on_object (Object&& object, Function function){
+  return function(std::foward<Object>(object));
+}
+     #+END_SRC
+   - 有时想要编写包含在其他函数中的函数, 被调用函数需要调用函数传递参数, 此时, 如果以值传递的方式进行
+     参数传递, 当被调用函数需要接受的参数为引用类型时, 会产生问题
+     #+BEGIN_SRC cpp
+template <typename Object, typename Function>
+decltype(auto) call_on_object (Object object, Function function){
+  return function(object); // 如果 function 接收的是 object& 类型参数, 会出现问题
+}
+     #+END_SRC
+   - 如果直接传递参数的引用但实际不需要修改传入的参数时候, 也会出现问题
+   - C++11 使用转发引用 (forwarding reference) 解决了问题, 转发引用在模板类型中写作两个引用 (&) 符号,
+     在下面的代码中, =fwd= 参数是一个 T 类型的转发引用, 而 =value= 不是 (它是一个普通 rvalue 引用)
+     #+BEGIN_SRC cpp
+template <typename T>
+void f(T&& fwd, int&& value) {...}
+     #+END_SRC
+   - **转发引用即允许接收常对象, 也可以接收普通对象和临时值**, 现在可以简单地传递这个参数, 这正是
+     ~std::forward~ 所做的.
+*** 3.1.2 函数指针
+1. 函数指针 (function pointer) 是一个存放函数地址的变量, 可以通过这个变量调用该函数. 函数指针也是
+   函数对象, 因为可以像普通函数一样进行调用, 另外, 所有可以自动转换为函数指针的类型, 也都是函数对象.
+   **但应该避免这种自动转换, 应该使用合适的函数对象**, 因为这样更强大也更容易处理
+2. 函数指针, 函数引用和可转换成函数指针对象的调用示例
+   #+BEGIN_SRC cpp
+int ask() {return 42;}
+
+typedef decltype (ask) * function_ptr;
+
+class convertible_to_function_ptr {
+public:
+  operator function_ptr() const {
+    return ask;
+  }
+};
+
+int main(int argc, char* argv[]){
+  auto ask_ptr = &ask;
+  std::cout << ask_ptr() << '\n'; // 指向函数的指针
+  auto &ask_ref = ask;
+  std::cout << ask_ref() << '\n'; // 函数引用
+  convertible_to_function_ptr ask_wrapper;
+  std::cout << ask_wrapper() << '\n'; // 可以自动转换成函数指针的对象
+}
+   #+END_SRC
+*** 3.1.3 调用操作符重载
+1. 除了创建可以转换为函数指针的类型, C++ 还提供了一个更好的方式创建类似函数的类型, 即创建一个类并重载它们
+   的调用操作符
+2. 重载调用操作符与定义成员函数一样简单, 只有一个特殊名字 ~operator()~, 需要指明返回类型和函数需要的所有参数
+   #+BEGIN_SRC cpp
+class function_object {
+public:
+  return_type operator() (arguments) const{ // 注意与条目 1 中的函数 wrapper 区分
+   ...
+  }
+};
+   #+END_SRC
+3. 与普通函数相比, 函数对象有一个优点, 每个实例都可以有自己的状态, 不论是可变还是不可变的, 这些状态
+   可以用于自定义函数的行为, 而不需要调用者指定
+4. 场景描述: 假设有一个包含所有人的列表, 需要统计其中年龄大于某个指定年龄的人的个数
+   - 使用普通函数, 没有扩展性, 因为对于所有的年龄限制都需要单独定义一个独立函数, 或者采用容易出错的方式: 将
+     年龄限制保存在一个全局变量中
+     #+BEGIN_SRC cpp
+bool order_than_42 (const person_t & person) {
+  return person.age > 42;
+}
+
+std::count_if(persons.cbegin(), persons.cend(), order_than_42)
+     #+END_SRC
+   - 比较明智的做法可以创建一个函数对象, 将年龄限制作为其内部状态, 这样, 谓词只需要定义一次, 然后根据不同的年龄
+     限制进行实例化
+     #+BEGIN_SRC cpp
+class order_than{
+public:
+  order_than(int limit) : m_limit(limit) {}
+  bool operator() (const person_t & person) const {
+    return person.age() > m_limit;
+  }
+private:
+  int m_limit;
+};
+
+int main(int argc, char* argv){
+    order_than order_than_42(42);
+    order_than order_than_14(14);
+
+    if (order_than_42(person)){
+        std::cout << person.name() << " is more than 42 years old.\n";
+    }else if (order_than_14(person)) {
+        std::cout << person.name() << " is more than 14 years old.\n";
+    }else {
+        std::cout << person.name() << " is 14 years old or younger.\n";
+    }
+}
+     #+END_SRC
+   - ~std::count_if~ 算法不关心传递了什么样的谓词函数, 只要它可以像普通函数一样被调用即可
+     #+BEGIN_SRC cpp
+std::count_if (persons.cbegin(), persons.cend(), order_than(42));
+std::count_if (persons.cbegin(), persons.cend(), order_than(16));
+     #+END_SRC
+*** 3.1.4 创建通用函数对象
+1. 之前定义的函数对象仍然不够灵活, 其只能接收 "person" 作为其输入, 许多东西都有 "年龄" 信息, 譬如汽车的使用
+   年限.
+   [[file:c03_02.png]]
+2. 为此, 可以定义一个函数对象, 其接收各种包含 "年龄" 信息的类型
+   #+BEGIN_SRC cpp
+template <typename T>
+class order_than{
+public:
+  order_than(int limit) : m_limit(limit) {}
+  bool operator() (const T& object) const {
+    return object.age() > m_limit;
+  }
+private:
+  int limit;
+};
+   #+END_SRC
+3. 对于具有 '.age()' 方法的任意类型都可以使用 ~order_than~
+   #+BEGIN_SRC cpp
+std::count_if(persons.cbegin(), persons.cend(), order_than<person_t>(42));
+std::count_if(cars.cbegin(), cars.cend(), order_than<car_t>(3));
+std::count_if(projects.cbegin(), projects.cend(), order_than<project_t>(2));
+   #+END_SRC
+4. 上述方法在实例化时, 必须指定对象的类型, 虽然有时候这种做法很有用, 但是大多数时候是冗长的, 而且很可能导致指定
+   的类型和调用操作符要求的类型不一致, 因此, 可以将调用操作符作为一个模板成员函数, 而非创建一个模板类, 这样, 在
+   编译器调用操作符时, 会 **自动推测参数类型**.
+   #+BEGIN_SRC cpp
+class order_than{
+public:
+  order_than(int limit) : m_limit (limit) {}
+  template <typename T>
+  bool operator()(T&& object) const{
+    return std::forward<T>(object).age() > m_limit; // 这里传递对象是因为 age 成员函数的 lvalue 和 rvalue 有不同的重载
+  }
+private:
+  int m_limit;
+};
+   #+END_SRC
+   此时, 再调用 ~order_than~ 时, 无需再指定对象类型了
+   #+BEGIN_SRC cpp
+order_than predicate(5);
+std::count_if (persons.cbegin(), persons.cend(), predicate);
+std::count_if (cars.cbegin(), cars.cend(), predicate);
+   #+END_SRC
+** 3.2 lambda 和闭包
+*** 3.2.1 lambda 语法
+1. 从语法上讲, lambda 表达式由 3 个主要部分组成 -- 头, 参数列表和体
+   [[file:c03_g01.png]]
+   #+BEGIN_SRC cpp
+[a, &b] // 头
+(int x, int y) // 参数列表
+{return a*x + b*y;} // 体
+   #+END_SRC
+2. lambda 头指明了周围的哪些变量在 lambda 体内可见, 变量既可以作为值进行捕获, 也可以作为引用捕获
+   - ~[a, &b]~ -- 这里 a 作为值捕获, 传递的是 a 的值得副本, b 作为引用进行捕获
+   - ~[]~ -- 这样的 lambda 不使用周围任何变量, 这些 lambda 没有任何内部状态, 且可以自动转换为普通函数的指针
+   - ~[&]~ -- 把所有 lambda 体中使用的变量都作为引用进行捕获
+   - ~[=]~ -- 把所有 lambda 体中使用的变量都作为值进行捕获
+   - ~[this]~ -- 以值的方式捕获 this 指针
+   - ~[&, a]~ -- 除了 a 作为值被捕获, 其他变量都作为引用被捕获
+   - ~[=, &b]~ -- 除了 b 作为引用被捕获, 其他变量都作为值被捕获
+*** 3.2.2 lambda 详解
+1. 场景: 假设仍要处理一个人的列表, 但这次他们是一个公司的职工. 公司被分为若干个小组, 每个小组有自己的名字, 需要
+   使用 =compony_t= 来表示一个公司, 它需要有一个成员函数获取每个员工所属分组的名字; 需要实现一个成员函数, 它接
+   收一个分组的名字, 返回该分组包含的员工数.
+   [[file:c03_04.png]]
+   #+BEGIN_SRC cpp
+class company_t {
+public:
+  std::string team_name_for(const person_t &employee) const;
+  int count_team_members(const std::string &team_name) const;
+private:
+  std::vector<person_t> m_employees;
+};
+   #+END_SRC
+2. 实现 ~count_team_members~, 需要检查每个员工所属分组以及统计分组与函数参数匹配的人数来实现
+   #+BEGIN_SRC cpp
+int company_t::count_team_members(
+  const std::string &team_name
+  ) const {
+  return std::count_if(
+    m_employees.cbegin(),
+    m_employees.cend(),
+    [this, &team_name](const person_t& employee){
+      return team_name_for(employee) == team_name;
+    });
+}
+   #+END_SRC
+3. 上述写法, 在 C++ 进行编译时, 会将 lambda 表达式转换成一个包含两个成员变量的新类 (一个指向 ~company_t~ 对象的指针,
+   一个指向 ~std::string~ 的引用), 每个成员对应一个捕获的变量, 这个类将包含一个与 lambda 有相同参数和体的调用操作符,
+   得到如下的等价类
+   #+BEGIN_SRC cpp
+class lambda_implementation {
+public:
+  lambda_implementation (const company_t * _this,
+    const std::string &team_name)
+    : m_this(_this), m_team_name(team_name) {}
+
+  bool operator()(const person_t &employee) const {
+    return m_this -> team_name_for(employee) == m_team_name;
+  }
+private:
+  const company_t *m_this;
+  const std::string &m_team_name;
+};
+   #+END_SRC
+4. 求解 lambda 表达式的时候, 除了需要创建类以外, 还要创建一个称作闭包 (closure) 的类实例: 一个包含某些状态和执行上下
+   文的类对象.
+5. lambda 调用默认是 const 的, 如果需要改变捕获变量的值, 而且它们是作为值捕获而非引用捕获的时候, 需要将 lambda 声明
+   为可修改的
+   #+BEGIN_SRC cpp
+int count = 0;
+std::vector<std::string> words{"An", "ancient", "pond"};
+std::for_each(words.cbegin(),
+  words.cend(),
+  [count](const std::string &word) mutable // 按值捕获 count, 对其修改都是局部的且仅对 lambda 可见
+    {
+      if(isupper(word[0])){
+        std::cout << word << " " << count << std::endl;
+        count++;
+      }
+    })
+   #+END_SRC
+*** 3.2.3 在 lambda 中创建任意成员变量
+1. 就算有能力通过值或者引用捕获对象, 也不能将 move-only 的对象保存在 lambda 内部, 因为 move-only 的对象只定义了 move
+   构造函数, 没有定义 copy 构造函数
+2. 假设要创建一个网络请求, 并且把 session 数据存放到一个唯一的指针对象中, 在请求完成后执行 lambda, 下面是错误示例
+   #+BEGIN_SRC cpp
+std::unique_ptr<session_t> session = create_session();
+auto request = server.request("GET /", session -> id());
+
+request.on_completed(
+  [session] // 错误, std::unique_ptr<session_t> 没有 copy 构造函数
+  (response_t response){
+    std::cout << "Got response: " << response
+      << " for session: " << session;
+  }
+  );
+   #+END_SRC
+3. 这种情况下, 可以使用扩展语法, 可以单独定义任意的成员变量和它的初始值, 而非指定要捕获哪个变量
+   #+BEGIN_SRC cpp
+request.on_completed(
+  [session = std::move(session), // 将 session 的所有权移到 lambda 中
+    time=current_time()] // 创建一个时间 lambda 成员变量
+  (response_t response){
+    std::cout << "Got response: " << response
+              << " for session: " << session
+              << " the request took: "
+              << (current_time() - time)
+              << "milliseconds.";
+  }
+  );
+   #+END_SRC
+*** 3.2.3 通用 lambda 表达式
+1. 通过指明参数类型为 =auto= 的方式, lambda 允许创建通用的函数对象
+   #+BEGIN_SRC cpp
+auto predicate = [limit = 42] (auto&& object) {
+                   return object.age() > limit;
+                 };
+std::count_if (persons.cbegin(), persons.cend(), predicate);
+std::count_if (cars.cbegin(), cars.cend(), predicate);
+   #+END_SRC
+2. 需要注意的是, 通用 lambda 是一个调用操作符模板化的类, 而非一个包含调用操作符的模板类, lambda 每次调用而不是
+   创建时, 自动推断每个参数的具体类型, 并且相同的 lambda 可用于处理不同类型的对象.
+3. 创建 lambda 时, 如果有多个参数被声明为 auto, 这些参数的类型都需要单独进行推断, 但如果通用 lambda 的所有参数
+   同属于同一个类型, 此时可以使用 =decltype= 声明参数的类型, 譬如, 创建一个通用的 lambda, 其接收的两个参数类型
+   相同, 此时, 可以把 =first= 类型声明为 =auto=, 而 =second= 参数则声明为 ~decltype(first)~, 即
+   #+BEGIN_SRC cpp
+[] (auto first, decltype(first) second) {...}
+   #+END_SRC
+4. C++20, lambda 语法将会被扩展, 允许显示声明模板参数, 不再需要声明为 =decltype=
+   #+BEGIN_SRC cpp
+[]<typename T>(T first, T second){...}
+   #+END_SRC
+** 3.3 编写比 lambda 更简洁的函数对象
+1. lambda 消除了创建函数对象时大量呆板代码, 但是却引入了调用时的呆板代码
+2. 场景描述: 假设正在编写一个 Web 客户端, 已经向服务器发送了几个请求并收到一个相应的集合. 因为请求可能失败,
+   因此 =response_t= 提供了 ~.error()~ 成员函数返回失败时信息, 如果请求失败, 返回 =true=, 否则返回 =false=
+   [[file:c03_05.png]]
+3. 根据响应是否有错对集合进行过滤, 而且要创建一个包含有效响应的集合和一个无效响应的集合, 可以很容易地将
+   lambda 传递给前面定义的 filter 函数
+   #+BEGIN_SRC cpp
+ok_responses = filter(responses,
+  [](const response_t &response){
+    return !response.error();
+  });
+failed_response = filter(responses,
+  [](const response_t &response){
+    return response.error();
+  });
+   #+END_SRC
+4. 如果经常需要执行此操作, 对于具有 ~.error()~ 成员函数并返回 =bool= 值得其他类型, 类似上述的呆板代码数量
+   将远超过定义函数对象的呆板代码量, 此时可以创建一种函数对象, 它可以处理任何提供 ~.error()~ 成员函数的类对象,
+   并提供简洁的语法, 调用方式可以如下
+   #+BEGIN_SRC cpp
+ok_responses = filter(responses, not_error);
+failed_response = filter(response, !error);
+   #+END_SRC
+5. 为了实现上述简洁语法的写法, 只需要实现一个简单的类重载调用操作符, 它需要存储一个单独的 bool 值, 来告诉用户
+   是选择正确还是错误的响应
+   #+BEGIN_SRC cpp
+class error_test_t {
+public:
+  error_test_t (bool error = true) : m_error(error) {}
+
+  template<typename T>bool operator()(T&& value) const {
+    return m_error == (bool) std::forward<T>(value).error();
+  }
+private:
+  bool m_error;
+};
+
+error_test_t error(true);
+error_test_t not_error(false);
+   #+END_SRC
+6. 如果还希望简洁语法支持类似 ~filter(responses, error=false)~ 和 ~filter(responses, error=true)~, 函数对象
+   可以重载 ~operator==~ 和 ~operator!=~
+   #+BEGIN_SRC cpp
+class error_test_t {
+public:
+  ...
+  error_test_t operator == (bool test) const {
+    return error_test_t(test ? m_error : !m_error);
+  } // 如果 test 为 true, 返回谓词当前的状态; 反之, 返回状态的逆状态
+  error_test_t operator != () const {
+    return error_test-t(!m_error);
+  }
+  ...
+};
+   #+END_SRC
+*** 3.3.1 STL 中的操作符函数对象
+标准库对所有普通的操作符提供了包装器, 经常地, 我们不再需要自行定义匿名函数, 而只需要使用相应的包装器即可, 譬如
+1. 计算乘积
+   #+BEGIN_SRC cpp
+std::vector<int> numbers{1, 2, 3, 4};
+product = std::accumulate(numbers.cbegin(), numbers.cend(), 1, std::mutiplies<int>());
+   #+END_SRC
+2. 降序排列
+   #+BEGIN_SRC cpp
+std::vector<int> numbers {5, 21, 13, 42};
+std::sort(numbers.cbegin(), numbers.cend(), std::greater<int>());
+   #+END_SRC
+3. 标准库中的操作符包装器
+   |--------------+--------------------+---------------------------|
+   |--------------+--------------------+---------------------------|
+   | 分类         | 包装器名称         | 操作                      |
+   |--------------+--------------------+---------------------------|
+   | 算术操作符   | std::plus          | arg_1 + arg_2             |
+   |              | std::minus         | arg_1 - arg_2             |
+   |              | std::mutiplies     | arg_1 * arg_2             |
+   |              | std::divides       | arg_1 / arg_2             |
+   |              | std::modulus       | arg_1 % arg_2             |
+   |              | std::negates       | -arg_1 (a unary function) |
+   |--------------+--------------------+---------------------------|
+   | 比较操作符   | std::equal_to      | arg_1 == arg_2            |
+   |              | std::not_equal_to  | arg_1 != arg_2            |
+   |              | std::greater       | arg_1 > arg_2             |
+   |              | std::less          | arg_1 < arg_2             |
+   |              | std::greater_equal | arg_1 >= arg_2            |
+   |              | std::less_equal    | arg_1 <= arg_2            |
+   |--------------+--------------------+---------------------------|
+   | 逻辑操作符   | std::logic_and     | arg_1 && arg_2            |
+   |              | std::logic_or      | arg_1 or arg_2            |
+   |              | std::logic_not     | !arg_1 (a unary function) |
+   |--------------+--------------------+---------------------------|
+   | 位运算操作符 | std::bit_and       | arg_1 & arg_2             |
+   |              | std::bit_or        | arg_1 (bit or) arg_2      |
+   |              | std::bit_xor       | arg_1 ^ arg_2             |
+   |--------------+--------------------+---------------------------|
+   |--------------+--------------------+---------------------------|
+4. 从 C++14 开始, 在调用标准库包装器时, 无需指明类型, 可以写作 ~std::greater<>()~ 而不用 ~std::greater<int>()~,
+   在调用时, 编译器会自动推断参数类型.
+*** 3.3.2 其他库中的操作符函数对象
+1. STL 的操作符包装器可以覆盖最基本的场景, 但是书写起来比较笨拙, 且不容易整合, Boost 项目中一些库解决了这样的问题
+2. 场景: 使用 ~std::partition~ 将一个数字集合, 按照是否大于 42 进行划分
+   - STL 中的 ~std::less_equal~ 函数对象不适用, 因为分类算法要求返回布尔结果的一元函数, 而 ~std::less_equal~
+     要求两个参数, 虽然标准库提供了将其中一个参数绑定到固定值的方法, 但写法并不完美
+   - Boost.Phoenix 提供了另一种定义方法
+     #+BEGIN_SRC cpp
+using namespace boost::phoenix::arg_names;
+
+std::vector<int> numbers {21, 5, 62, 42, 53};
+// arg1 是定义在 Boost.Phoenix 中的占位符, 会将自己绑定到传递给该函数对象的第一个参数
+std::partition(numbers.begin(), numbers.end(), arg1 <= 42);
+     #+END_SRC
+3. 利用 Boost.Phoenix 的占位符可以定义更为复杂的函数对象, 譬如, 计算集合中的每个数字的平方的一般的和
+   [[file:c03_06.png]]
+   #+BEGIN_SRC cpp
+// 在折叠过程中, 第一个参数为累加值, 第二个参数为当前正在处理的值
+std::accumulate(numbers.cbegin(), numbers.cend(), 0, arg1 + arg2*arg2/2);
+   #+END_SRC
+4. 利用 Boost.Phoenix 甚至可以替换之前的标准库中的包装器
+   #+BEGIN_SRC cpp
+product = std::accumulate(numbers.cbegin(), numbers.cend(), 1, arg1 * arg2);
+std::sort(numbers.begin(), numbers.end(), arg1 > arg2);
+   #+END_SRC
+** 3.4 用 ~std::function~ 包装函数对象
+1. 如果需要接收函数对象作为参数, 或创建变量保存 lambda 表达式, 目前为止, 只能依赖自动类型检测 (auto)
+2. STL 提供了一个 ~std::function~ 类模板, 可以包装任意类型的函数对象
+   #+BEGIN_SRC cpp
+std::function<float(float, float)> test_function; // 先写函数的结果类型, 后跟圆括号中的参数(类型)列表
+test_function = std::fmaxf; // 普通函数
+test_function = std::multiplies<float>(); // 含有调用操作符的类
+test_function = std::multiplies<>(); // 包含通用调用操作符的类
+test_function = [x](float a, float b) {return a*x + b;}; // lambda
+test_function = [x](auto a, auto b) {return a*x + b;}; // 通用 lambda
+test_function = (arg1 + arg2) / 2; // boost::phoenix 表达式
+test_function = [] (std::string s) {return s.empty();}; // ERROR, 错误签名的 lambda
+   #+END_SRC
+3. ~std::function~ 并不是对包含的类型进行模板化, 而是对函数对象的签名进行模板化, 模板参数指定了函数的返回值和参数的
+   类型. 可以使用相同的类型存储普通函数, 函数指针, lambda 表达式和其他可以调用的对象 (任何在 ~std::function~ 模板
+   参数中指定了签名的对象.)
+4. ~std::function~ 还可以存储不提供普通调用语法的内容, 譬如类的成员变量和类的成员函数
+   #+BEGIN_SRC cpp
+// C++ 核心语言阻止使用 std::string 的 .empty() 成员函数, 就好像它不是成员函数一样 (std::string::empty(str))
+// 通过 std::function, 就可以使用普通语法对其进行调用
+std::string str{"A small pond"};
+std::function<bool(std::string)> f;
+
+f = &std::string::empty;
+
+std::cout << f(str);
+   #+END_SRC
+5. ~std::function~ 有很明显的性能问题, 为了隐藏包含的类型并提供一个所有可调用类型的通用接口, ~std::function~ 使用
+   了类型擦除 (type erasure) 技术, 因此需要慎重使用 ~std::function~.

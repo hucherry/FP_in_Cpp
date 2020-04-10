@@ -1,0 +1,142 @@
+#+TITLE: 函数式编程简介
+
+* 1.1 什么是函数式编程
+1. 定义
+   #+BEGIN_QUOTE
+函数式编程是一种编程风格, 它强调表达式的求值, 而不是指令的执行. 这些表达式由函数和基本的值组合而成.
+函数式语言就是支持并鼓励使用函数式风格编程的语言.
+   #+END_QUOTE
+2. 场景描述: 计算一个数列的和
+   - 命令式编程: 对这个数列进行循环处理, 并把它们累加到变量上, 需要指明求和的每个步骤
+   - 函数式编程: 定义数列的和是什么, 求和时, 计算机知道如何去做, 可以这样定义, 数列的和就是把第一个
+     元素与剩余元素的和相加, 如果数列为空, 则和为 0. **这里只是定义和是什么, 而不需要解释如何计算**
+** 1.1.1 与面向对象编程的关系
+1. 面向对象的范式基于对数据的抽象, 它允许编程者隐藏对象的内部细节, 并通过对象的 API 给其他部分留下可操作的接口
+2. FP 风格基于对函数的抽象, 它可以创建比底层语言提供的复杂得多的控制结构
+** 1.1.2 命令式与声明式编程比较
+1. 场景描述: 假设需要读取一系列文件, 并统计每个文件的行数
+2. 命令式编程的方式
+   - 打开每个文件
+   - 定义一个 counter 变量保存行数
+   - 逐一读取文件的每个字符, 并在读取到换行符 ('\n') 时将 counter + 1
+   - 一个文件读取结束, 存储计算的行数
+   - 代码
+     #+BEGIN_SRC cpp
+std::vector <int>
+count_lines_in_files (const std::vector<std::string>& files){
+  std::vector<int> results;
+  char c = 0;
+  for (const auto &file : files) {
+    int line_count = 0;
+    std::ifstream in(file);
+    while(in.get(c)){
+      if (c=='\n'){
+        line_counter++;
+      }
+    }
+    results.push_back(line_counter);
+  }
+  return results;
+}
+     #+END_SRC
+3. 函数式编程的方式, 使用 ~std::count~ 与流迭代器 ~std::istreambuf_iterator~
+   #+BEGIN_SRC cpp
+int count_lines(const std::string& filename){
+  std::ifstream in(filename);
+
+  return std::count(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>(), '\n');
+}
+
+std::vector<int>
+count_lines_in_files(const std::vector<std::string>& files){
+  std::vector<int> results;
+  for(const auto& file : files){
+   results.push_back(count_lines(file));
+  }
+  return results;
+}
+   #+END_SRC
+4. 用函数式风格定义整个算法
+   - **应该做什么, 而非应该怎样去做**
+   - 通用模式: 将一个函数应用于每个元素, 并收集结果, 可以通过 ~std::transform~ 实现
+   - 代码
+     #+BEGIN_SRC cpp
+std::vector<int>
+count_lines_in_files(const std::vector<std::string>& files){
+  std::vector<int> results(files.size());
+
+  std::transform(files.cbegin(), files.cend(),
+    results.begin(),
+    count_lines);
+  return results;
+}
+     #+END_SRC
+* 1.2 纯函数
+#+BEGIN_QUOTE
+FP 的核心思想是纯函数 (pure function): 函数只使用 (而不修改) 传递给它们的实际参数计算结果.
+但是这样的要求太过严格, 因此, 对纯函数定义如下: 任何 (在更高层次上 -- 除硬件以上的层) 没有
+可见副作用的函数称为虚函数.
+#+END_QUOTE
+
+** 1.2.1 避免可变状态
+1. 命令式读取文件行数的代码有很多 "不纯" 的语句
+   #+BEGIN_SRC cpp
+for (const auto & file : files){
+  int line_count = 0;
+  std::ifstream in(file);
+  char c;
+  while(in.get(c)){
+    if (c == '\n'){
+      line_count++;
+    }
+  }
+  results.push_back(line_count);
+}
+   #+END_SRC
+2. 状态改变示意图
+   [[file:c01_04.png]]
+3. 使用 ~count_lines~ 函数, 即便其内部声明了一个输入流并修改它, 但由于 =std::ifstream=
+   API 的原因, 这已经是最好的方案了; ~count_lines_in_files~ 不需要 I/O, 但还是用 ~count_lines~
+   实现的, 所以作为调用者, 可以认为其是纯函数
+   #+BEGIN_SRC cpp
+int count_lines(std::string &filename){
+  std::ifstream in(filename);
+  return std::count(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>(), '\n');
+}
+   #+END_SRC
+4. 使用范围操作符 (range notation) 实现 ~count_lines_in_files~
+   #+BEGIN_SRC cpp
+std::vector<int>
+count_lines_in_files(const std::vector<std::string>&files){
+  return files | transform(count_lines);
+}
+   #+END_SRC
+* 1.3 以函数方式思考问题
+1. 场景: 对一系列文件统计每个文件的行数
+2. 以函数方式思考
+   - 首先对问题简化, 考虑每次仅处理一个文件
+   - 问题简化为, 定义一个函数, 接收一个文件名, 计算该文件中行数
+     [[file:c01_05.png]]
+   - 给定一个东西 (文件名), 需要另一个东西 (文件的内容, 需要统计文件的行数)
+     [[file:c01_06.png]]
+   - 给出文件内容的函数 (=std::string= -> =std::ifstream=), 用它的结果调用统计行数的函数
+     (=std::ifstream= -> =int=)
+     [[file:c01_07.png]]
+   - 提升两个函数应用到文件集合
+     [[file:c01_08.png]]
+* 1.4 函数式编程优点
+** 1.4.1 代码简洁易读
+** 1.4.2 并发和同步
+1. 开发并发系统的主要难点在于共享可变状态, 必须保证组件不能互相干扰
+2. 由于纯函数几乎不修改任何东西, 不需要原子或信号量进行显式同步, 可以把用于单线程的代码, 几乎不加修改
+   地用到多线程系统.
+3. 以下代码, 如果 ~sqrt~ 是一个纯函数, 那么 ~sum~ 就可以将整个向量分为若干部分, 并在不同线程对不同部
+   分进行求解. 不幸的是, C++ 目前还没有纯函数的概念, 因此并行不能自动执行, 但可以显示调用 ~sum~ 的并
+   行版本.
+   #+BEGIN_SRC cpp
+std::vector<double> xs = {1.0, 2.0, ...};
+auto result = sum(xs | transform(sqrt))
+   #+END_SRC
+** 1.4.3 持续优化
+- 使用抽象层次更高的 STL 或其他可信的库函数还有另一个优点, 即使不修改任何一行代码, 程序也在不断提高.
+- 如果使用高层次抽象, 就可以依赖其他人对代码进行优化, 绝大多数 STL 实现对目标平台和编译器进行了特定优化.
