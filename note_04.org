@@ -1,0 +1,123 @@
+#+TITLE: 第 4 章: 以旧函数创建新函数
+
+* 第 4 章: 以旧函数创建新函数
+
+** 4.1 偏函数应用
+1. 场景描述: 统计集合中所有大于指定年龄的对象数目
+2. 解决思路: 从概念上来看, 需要一个函数, 它接收两个参数 -- 一个对象 (譬如一个人或者一辆车), 一个与对
+   象属性进行比较的值, 如下图所示, 如果对象的年龄大于给定的值, 该函数就返回 =true=.
+   [[file:c04_01.png]]
+3. 解决方案: 现在创建一个普通的函数对象, 在构建时获得一个整数值, 并把它保存在函数对象的内部, 然后与传
+   递给它的调用操作符的参数进行比较, 这样, 将一个二元函数 'operator >: (int, int) -> bool' 通过它
+   创建一个新的一元函数.
+   #+BEGIN_SRC c++
+class greater_than {
+public:
+  greater_than (int value) : m_value(value) {}
+  bool operator() (int arg) const {return arg > m_value;}
+private:
+  int m_value;
+};
+
+greater_than greater_than_42(42);
+
+greater_than_42(1); // return false
+greater_than_42(50); // return true
+   #+END_SRC
+4. 偏函数 (partial function application): 通过把已知函数的一个或多个参数设定为特定值的方法创建新函
+   数的概念
+
+*** 4.1.1 把二元函数转换为一元函数的通用方法
+*** 4.1.2 使用 ~std::bind~ 绑定值到特定的函数参数
+1. 在 C++11 之前, 标准库提供了 ~std::bind1st~ 和 ~std::bind2nd~, 可以把第一个或第二个参数绑定为特定
+   值, C++17 已经删除
+2. C++11 之后, 推荐使用 ~std::bind~
+   - ~std::bind~ 第一个参数是要绑定参数的函数, 其他参数是要绑定的值
+   - 在对一个函数进行绑定的时候, 通过为所有需要的参数提供值, 可以创建一个新的函数对象, 它保存了要绑
+     定的函数和该参数所需要的所有参数的值, 绑定只是定义了参数的值, 但没有调用函数; 只有当 ~std::bind~
+     返回的函数对象被调用时, 这个函数才会被调用.
+     #+BEGIN_SRC c++
+auto bound = std::bind(std::greater<double>(), 6, 42);
+bool is_6_greater_than_42 = bound();
+     #+END_SRC
+     [[file:c04_04.png]]
+   - 当需要 ~std::bind~ 只绑定某一个参数的时候, 其他参数可以使用占位符 (placeholders), 类似
+     ~Boost::Phoenix~ 的 =arg1=, =arg2=, $\ldots$, ~std::bind~ 占位符使用 =_1=, =_2=, $\ldots$
+     #+BEGIN_SRC c++
+auto is_greater_than_42 = std::bind(std::greater<double>(), _1, 42);
+auto is_less_than_42 = std::bind(std::greater<double>(), 42, _1);
+
+is_less_than_42(6); // return true
+is_greater_than_42(5); // return false
+     #+END_SRC
+     [[file:c04_05.png]]
+*** 4.1.3 二元函数参数的反转
+1. 场景描述: 假设有一个 double 类型的向量需要按升序排列
+2. 解决方案: 通常使用 ~std::less~ (~std::sort~ 的默认行为) 实现, 这里使用 ~std::greater~ 实现
+   #+BEGIN_SRC c++
+std::sort(scores.begin(), scores.end(), std::bind(std::greater<double>(), _2, _1)); // 参数反转, _2 接收第1个参数, _1 接收第 2 个参数
+   #+END_SRC
+*** 4.1.4 对多参数使用 ~std::bind~
+1. 场景描述: 针对 =person= 的集合, 将所有人都写到标准输出或其他输出流, 把人员信息按预定格式输出
+2. 解决方案:
+   - 输出函数定义, 需要三个参数 -- 人员, 输出流的引用[fn:1]和所需的输出格式
+     #+BEGIN_SRC c++
+void print_person(const person_t &person, std::ostream &out, person_t::output_format_t format) {
+  if (format == person_t::name_only) {
+    out << person.name() << '\n';
+  } else if (format == person_t::full_name) {
+    out << person.name() << ' '
+      << person.surname() << '\n';
+  }
+}
+     #+END_SRC
+   - 如果需要输出集合中所有成员的信息, 可以将 =print_person= 传递给 ~std::for_each~ 算法, 并把 =out=
+     和 =format= 参数绑定
+     #+BEGIN_SRC c++
+std::for_each(people.cbegin(), people.cend(),
+  std::bind(print_person,
+    _1,
+    std::ref(std::cout),
+    person_t::name_only));
+
+std::for_each(people.cbegin(), people.cend(),
+  std::bind(print_person,
+    _1,
+    std::ref(file),
+    person_t::full_name));
+     #+END_SRC
+   - ~std::bind~ 可以绑定任意可调用对象的成员函数, 如果在类 =person_t= 中定义了一个 =print= 函数, 一样
+     可以使用 =std::bind= 对其进行绑定
+     #+BEGIN_SRC c++
+class person_t {
+public:
+  void print(std::ostream &out, output_format_t format) const {
+
+  }
+};
+
+std::for_each(people.cbegin(), people.cend(),
+  std::bind(&person_t::print,
+    _1,
+    std::ref(std::cout),
+    person_t::name_only));
+     #+END_SRC
+*** 4.1.5 使用 lambda 替代 ~std::bind~
+1. 虽然 ~std::bind~ 提供了优美简洁的语法, 用于已存在的函数进行参数绑定和参数重新排序来创建新的函数对
+   象, 但也带来了额外的开销, 编译器愈发复杂且难以优化, 它实现于库的层次, 使用了复杂的模板元编程技术来
+   达到目标
+2. 对于偏函数可以使用 ~lambda~ 替代 ~std::bind~
+   - 将任何绑定变量或引用变量的参数转换成捕获变量
+   - 把所有占位符转换为 ~lambda~ 参数
+   - 把所有绑定到特定值的参数直接写到 ~lambda~ 体中
+     #+BEGIN_SRC c++
+auto bound = [] {return std::greater<double>()(6, 42);};
+auto is_greater_than_42 = [](double value) {return std::greater<double>()(value, 42);};
+auto is_less_than_42 = [] (double value) {return std::greater<double>()(42, value);};
+
+is_greater_than_42(5);
+is_less_than_42(5);
+     #+END_SRC
+* Footnotes
+
+[fn:1] 输入输出流不能复制, 因此需要使用其引用, 可以通过 ~std::ref~ 来得到相应的引用
